@@ -9,12 +9,23 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.List;
 import java.text.DecimalFormat;
-import java.text.DecimalFormatSymbols;
 
 import com.example.api.ElpriserAPI.Elpris;
 
 
 public class Main {
+    private static final DecimalFormat ORE_FORMAT = new DecimalFormat("0.00");
+    private static final DateTimeFormatter FORMAT_HH_MM = DateTimeFormatter.ofPattern("HH:mm");
+    private static final DateTimeFormatter FORMAT_HH = DateTimeFormatter.ofPattern("HH");
+
+    private record ParsedArguments(
+            Prisklass zone,
+            LocalDate date,
+            ChargingTime chargingTime,
+            boolean sorted,
+            boolean help
+    ) {}
+
     public enum ChargingTime {
         TWO_HOURS("2h", 2),
         FOUR_HOURS("4h", 4),
@@ -27,6 +38,7 @@ public class Main {
             this.label = label;
             this.hours = hours;
         }
+
         public static ChargingTime fromLabel(String label) {
             for (ChargingTime ct : ChargingTime.values()) {
                 if (ct.label.equalsIgnoreCase(label)) {
@@ -37,11 +49,13 @@ public class Main {
         }
 
     }
+    private static final DateTimeFormatter TIME_FORMAT_HH_MM = DateTimeFormatter.ofPattern("HH:mm");
+    private static final DateTimeFormatter TIME_FORMAT_HH = DateTimeFormatter.ofPattern("HH");
 
     public static void main(String[] args) {
+        Locale.setDefault(Locale.of("sv","se"));
         Map<String, String> argMap = new HashMap<>();
         Set<String> flags = new HashSet<>();
-        ElpriserAPI elpriser = new ElpriserAPI();
         Prisklass valdPrisklass = null;
         LocalDate valdDatum = LocalDate.now();
         ChargingTime valdLaddtid = null;
@@ -50,91 +64,92 @@ public class Main {
             printHelp();
             return;
         }
+
+        ParsedArguments parsed; // All parsing sker nu i egen metod.
+        try {
+            parsed = parseArguments(args);
+        } catch (IllegalArgumentException e) {
+            System.out.println(e.getMessage());
+            return;
+        }
+
+        if (parsed.help()) {
+            printHelp();
+            return;
+        }
+
+        if (parsed.zone() == null) {
+            System.out.println("Argument zone is required. Du måste ange ett elprisområde med --zone (SE1, SE2, SE3 eller SE4).");
+            return;
+        }
+
+        ElpriserAPI elpriser = new ElpriserAPI();
+
+        if (parsed.chargingTime() != null) {
+            chargeWindow(elpriser, parsed.zone(), parsed.date(), parsed.chargingTime());
+        } else {
+            printPriser(elpriser, parsed.date(), parsed.zone(), parsed.sorted());
+        }
+    }
+
+    private static ParsedArguments parseArguments(String[] args) {
+        Prisklass zone = null;
+        LocalDate date = LocalDate.now();
+        ChargingTime chargingTime = null;
+        boolean sorted = false;
+        boolean help = false;
+        List<String> errors = new ArrayList<>();
+
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
 
             switch (arg) {
-                case "--zone":
+                case "--zone" -> {
                     if (i + 1 < args.length && !args[i + 1].startsWith("--") && !args[i + 1].isBlank()) {
                         String zoneInput = args[++i].toUpperCase();
                         try {
-                            valdPrisklass = Prisklass.valueOf(zoneInput);
-                            argMap.put("--zone", zoneInput);
+                            zone = Prisklass.valueOf(zoneInput);
                         } catch (IllegalArgumentException e) {
-                            System.out.println("Ogiltig zon för elprisområde. Giltiga elprisområden är SE1, SE2, SE3, SE4.");
-                            return;
+                            errors.add("Ogiltig zon för elprisområde. Giltiga elprisområden är SE1, SE2, SE3, SE4.");
                         }
                     } else {
-                        System.out.println("Fel: Du måste ange ett elprisområde efter --zone.");
-                        return;
+                        errors.add("Du måste ange ett elprisområde efter --zone.");
                     }
-                    break;
-
-
-                case "--date":
+                }
+                case "--date" -> {
                     if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
                         String dateInput = args[++i];
                         try {
-                            LocalDate datum = LocalDate.parse(dateInput, DateTimeFormatter.ISO_LOCAL_DATE);
-                            argMap.put("--date", dateInput);
-                            valdDatum = datum;
+                            date = LocalDate.parse(dateInput, DateTimeFormatter.ISO_LOCAL_DATE);
                         } catch (DateTimeException e) {
-                            System.out.println("Ogiltigt datum. Använd formatet YYYY-MM-DD.");
-                            return;
+                            errors.add("Ogiltigt datum. Använd formatet YYYY-MM-DD.");
                         }
                     } else {
-                        System.out.println("Du behöver skriva ett datum med formatet YYYY-MM-DD efter --date.");
-                        System.out.println("Om du vill ha priserna för dagens datum så kan du köra programmet utan --date.");
-                        return;
+                        errors.add("Du behöver skriva ett datum med formatet YYYY-MM-DD efter --date.\n" +
+                                "Om du vill ha priserna för dagens datum så kan du köra programmet utan --date.");
                     }
-                    break;
-
-                case "--charging":
+                }
+                case "--charging" -> {
                     if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
                         String chargingArg = args[++i].toLowerCase();
-
-                        // Kontrollera att det är en giltig tid (2h, 4h, 8h)
-                        if (chargingArg.equals("2h") || chargingArg.equals("4h") || chargingArg.equals("8h")) {
-                            argMap.put("--charging", chargingArg);
-                        } else {
-                            System.err.println("Fel: Ogiltigt värde för --charging. Tillåtna värden är 2h, 4h, eller 8h.");
-                            return;
+                        try {
+                            chargingTime = ChargingTime.fromLabel(chargingArg);
+                        } catch (IllegalArgumentException e) {
+                            errors.add(e.getMessage());
                         }
-                    } else {
-                        System.err.println("Fel: Du måste ange laddtid efter --charging (t.ex. 2h, 4h, 8h).");
-                        return;
+                    }else {
+                        errors.add("Du måste ange laddtid efter --charging (t.ex. 2h, 4h, 8h).");
                     }
-                    break;
-
-                case "--sorted": //Fungerar med endast detta eftersom det finns en boolean efter switch som kollar om --sorted finns med.
-                case "--help":
-                    flags.add(arg);
-                    break;
-
-                default:
-                    System.err.println("Unknown argument: " + arg);
-                    return;
+                }
+                case "--sorted" -> sorted = true;
+                case "--help" -> help = true;
+                default -> errors.add("Unknown argument: " + arg);
             }
-
         }
-        if (flags.contains("--help")) {
-            printHelp();
-            return;
+        if(!errors.isEmpty()) {
+            throw new IllegalArgumentException(String.join("\n", errors));
         }
-        boolean sorterat = flags.contains("--sorted"); //Måste vara efter switch har körts. Om den deklareras tidigare kommer den alltid vara false.
-        if (valdPrisklass == null) {
-            System.out.println("Argument zone is required. Du måste ange ett elprisområde med --zone (SE1, SE2, SE3 eller SE4).");
-            return;
-        }
-        if(argMap.containsKey("--charging")) {
-            valdLaddtid = ChargingTime.fromLabel(argMap.get("--charging"));
-            chargeWindow(elpriser, valdPrisklass, valdDatum, valdLaddtid);
-        }else{
-            printPriser(elpriser, valdDatum, valdPrisklass, sorterat);
-        }
-
-
-
+        return new ParsedArguments(zone, date, chargingTime, sorted, help);
     }
 
     public static void printPriser(ElpriserAPI elpriser, LocalDate valdDatum, Prisklass valdPrisklass, boolean sorterat) {
@@ -147,30 +162,24 @@ public class Main {
             System.out.println("Inga priser tillgängliga för " + valdDatum + " i område " + valdPrisklass);
             return;
         }
-        // Formatter för svenska öre (kommatecken som decimal)
-        DecimalFormatSymbols symbols = new DecimalFormatSymbols(Locale.getDefault());
-        symbols.setDecimalSeparator(',');
-        DecimalFormat df = new DecimalFormat("0.00", symbols);
         if (sorterat) {
-            priser.sort(Comparator.comparingDouble(Elpris::sekPerKWh).thenComparing(p -> p.timeStart()));
-            System.out.println("Priser sorterade från högst till lägst.");
+            priser.sort(Comparator.comparingDouble(Elpris::sekPerKWh).thenComparing(Elpris::timeStart));
         }
         System.out.printf("Elpriser för %s i område %s (%d st):\n", valdDatum, valdPrisklass, priser.size());
-        DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm");
 
         for (Elpris pris : priser) {
-            String startTid = pris.timeStart().format(timeFormatter);
-            String slutTid = pris.timeEnd().format(timeFormatter);
-            String startTimme = String.format("%02d", pris.timeStart().getHour());
-            String slutTimme = String.format("%02d", pris.timeEnd().getHour());
+            String start = pris.timeStart().format(FORMAT_HH);
+            String end = pris.timeEnd().format(FORMAT_HH);
             double örePris = pris.sekPerKWh() * 100;
-            System.out.printf("%s-%s %s öre\n", startTimme, slutTimme, df.format(örePris));
+            System.out.printf("%s-%s %s öre\n", start, end, ORE_FORMAT.format(örePris));
+        }
+        if (!sorterat) {
+            System.out.println("\nStatistik:");
+            System.out.printf("Högsta pris: %s öre\n", ORE_FORMAT.format(max * 100));
+            System.out.printf("Lägsta pris: %s öre\n", ORE_FORMAT.format(min * 100));
+            System.out.printf("Medelpris:  %s öre\n", ORE_FORMAT.format(avg * 100));
         }
 
-        System.out.println("\nStatistik:");
-        System.out.printf("Högsta pris: %s öre\n", df.format(max * 100));
-        System.out.printf("Lägsta pris: %s öre\n", df.format(min * 100));
-        System.out.printf("Medelpris:  %s öre\n", df.format(avg * 100));
     }
     public static void chargeWindow(ElpriserAPI elpriser,Prisklass valdPrisklass,LocalDate valtDatum, ChargingTime chargingTime) {
         int antalTimmar = chargingTime.hours;
@@ -185,44 +194,50 @@ public class Main {
             System.out.println("För få datapunkter för att hitta ett laddfönster på " + antalTimmar + " timmar.");
             return;
         }
-        double lägstaSummaPris = Double.MAX_VALUE;
+        double lägstaSummaPris;
         int startIndex = -1;
 
-        for (int i = 0; i <= allaPriser.size() - antalTimmar; i++) {
-            double total = 0;
-            for (int j = 0; j < antalTimmar; j++) {
-                total += allaPriser.get(i + j).sekPerKWh();
-            }
-            if (total < lägstaSummaPris) {
-                lägstaSummaPris = total;
-                startIndex = i;
+        double currentSum = 0;
+
+// Initiera summan med de första "antalTimmar" priserna
+        for (int i = 0; i < antalTimmar; i++) {
+            currentSum += allaPriser.get(i).sekPerKWh();
+        }
+        lägstaSummaPris = currentSum;
+        startIndex = 0;
+
+// Flytta fönstret steg för steg
+        for (int i = 1; i <= allaPriser.size() - antalTimmar; i++) {
+            currentSum = currentSum
+                    - allaPriser.get(i - 1).sekPerKWh()          // ta bort första timmen i förra fönstret
+                    + allaPriser.get(i + antalTimmar - 1).sekPerKWh(); // lägg till ny timme i nya fönstret
+
+            if (currentSum < lägstaSummaPris) { // Om det aktuella fönstret har lägre totalpris än tidigare fönster.x
+                lägstaSummaPris = currentSum; //Den nya lägre summan sparas som bästa pris.
+                startIndex = i; // Sparar vilket index det billigaste fönstret börjar på.
             }
         }
+
 
         if (startIndex == -1) {
             System.out.println("Kunde inte hitta ett optimalt laddningsfönster.");
             return;
         }
-        DateTimeFormatter timeOnly = DateTimeFormatter.ofPattern("HH:mm");
-        Elpris startPris = allaPriser.get(startIndex);
-        String laddStart = startPris.timeStart().format(DateTimeFormatter.ofPattern("HH:mm"));
-        String laddningStartTid = allaPriser.get(startIndex).timeStart().format(timeOnly);
-        System.out.printf("Påbörja laddning kl %s\n\n", laddningStartTid);
-        DateTimeFormatter hourFormatter = DateTimeFormatter.ofPattern("HH");
+        String laddningStartTid = allaPriser.get(startIndex).timeStart().format(TIME_FORMAT_HH_MM);
+        System.out.printf("Påbörja laddning kl %s\n", laddningStartTid);
 
         System.out.printf("\nBilligaste laddfönstret för %dh:\n", antalTimmar);
         for (int i = 0; i < antalTimmar; i++) {
             Elpris pris = allaPriser.get(startIndex + i);
-            String start = pris.timeStart().format(hourFormatter);
-            String end = pris.timeEnd().format(hourFormatter);
+            String start = pris.timeStart().format(FORMAT_HH);
+            String end = pris.timeEnd().format(FORMAT_HH);
             double ore = pris.sekPerKWh() * 100;
-            String oreFormatted = String.format(Locale.forLanguageTag("sv-SE"), "%.2f", ore);
+            String oreFormatted = ORE_FORMAT.format(ore);
             System.out.printf("%s-%s %s öre\n", start, end, oreFormatted);
         }
 
         double genomsnittSek = lägstaSummaPris / antalTimmar;
         double genomsnittOre = genomsnittSek * 100;
-        String genomsnittFormatted = String.format(Locale.forLanguageTag("sv-SE"), "%.2f", genomsnittOre);
         System.out.printf("Medelpris för fönster: %.2f öre\n", genomsnittOre);
 
     }
@@ -245,4 +260,3 @@ public class Main {
         """);
     }
 }
-
