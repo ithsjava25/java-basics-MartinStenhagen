@@ -193,19 +193,19 @@ public class Main {
             return;
         }
 
-        double lägstaSumma = 0;
+        double lowestSum = 0;
         int startIndex = 0;
 
         for (int i = 0; i < timmar; i++) {
-            lägstaSumma += priser.get(i).sekPerKWh();
+            lowestSum += priser.get(i).sekPerKWh();
         }
 
-        double currentSum = lägstaSumma;
+        double currentSum = lowestSum;
 
         for (int i = 1; i <= priser.size() - timmar; i++) {
             currentSum = currentSum - priser.get(i - 1).sekPerKWh() + priser.get(i + timmar - 1).sekPerKWh();
-            if (currentSum < lägstaSumma) {
-                lägstaSumma = currentSum;
+            if (currentSum < lowestSum) {
+                lowestSum = currentSum;
                 startIndex = i;
             }
         }
@@ -218,12 +218,12 @@ public class Main {
             Elpris pris = priser.get(startIndex + i);
             String start = pris.timeStart().format(FORMAT_HH);
             String end = pris.timeEnd().format(FORMAT_HH);
-            double öre = pris.sekPerKWh() * 100;
-            System.out.printf("%s-%s %s öre\n", start, end, ORE_FORMAT.format(öre));
+            double ore = pris.sekPerKWh() * 100;
+            System.out.printf("%s-%s %s öre\n", start, end, ORE_FORMAT.format(ore));
         }
 
-        double medelÖre = (lägstaSumma / timmar) * 100;
-        System.out.printf("Medelpris för fönster: %.2f öre\n", medelÖre);
+        double medelOre = (lowestSum / timmar) * 100;
+        System.out.printf("Medelpris för fönster: %s öre\n", ORE_FORMAT.format(medelOre));
     }
 
     public static void printHelp() {
